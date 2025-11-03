@@ -8,8 +8,8 @@ from web.pages.login_page import LoginPage
 
 # --- Configurações de Teste ---
 # !! TROQUE ESTES DADOS PELOS SEUS DADOS DE TESTE REAIS !!
-EMAIL_VALIDO = "seu-email-real@gmail.com"  
-SENHA_VALIDA = "SuaSenhaReal123"          
+EMAIL_VALIDO = "seu-email-real@gmail.com"
+SENHA_VALIDA = "SuaSenhaReal123"    
 SENHA_INCORRETA = "senha-errada-999"
 
 def test_cenario_6_login_com_sucesso(driver):

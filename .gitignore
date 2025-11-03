@@ -1,5 +1,14 @@
-projectvenv/
+# Ambientes Virtuais Python
 venv/
+.venv/
+
+# Arquivos de Cache e Build
 __pycache__/
+*.pyc
 .pytest_cache/
-.vscode/
+.DS_Store # Arquivo de sistema do Mac
+
+# Logs e Relatórios
+*.log
+htmlcov/
+.coverage
