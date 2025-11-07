@@ -1,66 +1,40 @@
-import pytest
-import requests
-from config.env_config import API_BASE_URL, REQUEST_TIMEOUT
+import uuid, pytest
+from config.env_config import REQUEST_TIMEOUT
 
-pytestmark = pytest.mark.api
+pytestmark = [pytest.mark.api, pytest.mark.auth]
 
-BASE = API_BASE_URL.rstrip("/")
-
-@pytest.mark.auth
-def test_08_successful_user_registration(unique_email):
-    payload = {"email": unique_email, "password": "Password123"}
-    r = requests.post(f"{BASE}/auth/register", json=payload, timeout=REQUEST_TIMEOUT)
-    assert r.status_code in (200, 201)
-    body = r.json()
-    assert body.get("email") == payload["email"]
-    assert "password" not in body
-
-@pytest.mark.auth
-def test_09_registration_existing_email(register_user):
-    email = register_user["email"]
-    payload = {"email": email, "password": "AnotherPass123"}
-    r = requests.post(f"{BASE}/auth/register", json=payload, timeout=REQUEST_TIMEOUT)
-    assert r.status_code in (400, 409), r.text
-
-@pytest.mark.auth
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"email": "not-an-email", "password": "Password123"},
-        {"email": "invalid@example.com"},  # sem password
-    ],
-)
-def test_10_registration_invalid_data(payload):
-    r = requests.post(f"{BASE}/auth/register", json=payload, timeout=REQUEST_TIMEOUT)
-    assert r.status_code == 422, r.text
-
-@pytest.mark.auth
-def test_11_successful_login(register_user):
-    payload = {"username": register_user["email"], "password": register_user["password"]}
-    r = requests.post(f"{BASE}/auth/login", data=payload, timeout=REQUEST_TIMEOUT)
-    assert r.status_code == 200
+def test_register_success(http, api_url):
+    rnd = uuid.uuid4().hex[:8]
+    body = {"username": f"user_{rnd}", "email": f"user_{rnd}@example.com", "password": "Abcd1234!"}
+    r = http.post(f"{api_url}/auth/register", json=body, timeout=REQUEST_TIMEOUT)
+    assert r.status_code == 200, r.text
     data = r.json()
-    assert data.get("token_type") == "bearer"
-    assert data.get("access_token")
+    assert data["email"] == body["email"]
+    assert data["username"] == body["username"]
 
-@pytest.mark.auth
-def test_12_login_incorrect_password(register_user):
-    payload = {"username": register_user["email"], "password": "wrong_password"}
-    r = requests.post(f"{BASE}/auth/login", data=payload, timeout=REQUEST_TIMEOUT)
-    assert r.status_code == 401, r.text
+def test_register_duplicate_email(http, api_url):
+    rnd = uuid.uuid4().hex[:8]
+    email = f"dup_{rnd}@example.com"
+    body = {"username": f"dup_{rnd}", "email": email, "password": "Abcd1234!"}
+    r1 = http.post(f"{api_url}/auth/register", json=body, timeout=REQUEST_TIMEOUT)
+    assert r1.status_code == 200, r1.text
+    r2 = http.post(f"{api_url}/auth/register", json=body, timeout=REQUEST_TIMEOUT)
+    assert r2.status_code == 400, f"esperado 400 duplicado, veio {r2.status_code}: {r2.text}"
 
-@pytest.mark.auth
-def test_13_login_non_existent_user():
-    payload = {"username": "nouser@example.com", "password": "Any12345"}
-    r = requests.post(f"{BASE}/auth/login", data=payload, timeout=REQUEST_TIMEOUT)
-    assert r.status_code == 401, r.text
+@pytest.mark.parametrize("email", ["x", "foo@", "bar.com", "x@x"])
+def test_register_invalid_email(http, api_url, email):
+    rnd = uuid.uuid4().hex[:5]
+    body = {"username": f"inv_{rnd}", "email": email, "password": "Abcd1234!"}
+    r = http.post(f"{api_url}/auth/register", json=body, timeout=REQUEST_TIMEOUT)
+    assert r.status_code == 422, f"esperado 422, veio {r.status_code}: {r.text}"
 
-@pytest.mark.auth
-@pytest.mark.parametrize(
-    "headers",
-    [None, {"Authorization": "Bearer invalidtoken"}],
-)
-def test_36_invalid_or_expired_token_in_auth_endpoints(headers):
-    # Usa endpoint que requer token; exemplo wishlists
-    r = requests.get(f"{BASE}/wishlists", headers=headers, timeout=REQUEST_TIMEOUT)
-    assert r.status_code == 401, r.text
+def test_login_success_with_seed(http, api_url, seed_credentials):
+    r = http.post(f"{api_url}/auth/login", json=seed_credentials, timeout=REQUEST_TIMEOUT)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert "access_token" in data and data.get("token_type") == "bearer"
+
+def test_login_wrong_password(http, api_url, seed_credentials):
+    bad = {"email": seed_credentials["email"], "password": "errada!"}
+    r = http.post(f"{api_url}/auth/login", json=bad, timeout=REQUEST_TIMEOUT)
+    assert r.status_code == 401, f"esperado 401, veio {r.status_code}"

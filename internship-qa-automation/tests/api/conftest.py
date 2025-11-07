@@ -3,62 +3,46 @@ import pytest
 import requests
 from config.env_config import API_BASE_URL, REQUEST_TIMEOUT
 
-
-
 @pytest.fixture(scope="session")
-def base_url():
+def api_url():
     return API_BASE_URL.rstrip("/")
 
-@pytest.fixture()
-def unique_email():
-    # Gera e-mail único por teste
-    return f"qa_{uuid.uuid4().hex[:10]}@example.com"
+@pytest.fixture(scope="session")
+def http():
+    s = requests.Session()
+    s.headers.update({"Content-Type": "application/json"})
+    return s
 
-@pytest.fixture()
-def strong_password():
-    return "StrongPass123!"
+def _auth_headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
 
-@pytest.fixture()
-def register_user(base_url, unique_email, strong_password):
-    payload = {"email": unique_email, "password": strong_password}
-    r = requests.post(f"{base_url}/auth/register", json=payload, timeout=REQUEST_TIMEOUT)
-    # Alguns ambientes podem retornar 200 ou 201; o desafio cita 200 OK
-    assert r.status_code in (200, 201), f"Falha ao registrar usuário: {r.text}"
-    return {"email": unique_email, "password": strong_password, "data": r.json()}
+@pytest.fixture(scope="session")
+def seed_credentials():
+    # usuário que vem no setup.json da sua API
+    return {"email": "projeto@example.com", "password": "Senha123!"}
 
-@pytest.fixture()
-def login_token(base_url, register_user):
-    payload = {"username": register_user["email"], "password": register_user["password"]}
-    r = requests.post(f"{base_url}/auth/login", data=payload, timeout=REQUEST_TIMEOUT)
-    assert r.status_code == 200, f"Falha no login: {r.text}"
-    token = r.json().get("access_token")
-    assert token, f"Resposta de login sem access_token: {r.text}"
-    return token
+@pytest.fixture(scope="session")
+def bearer_token(http, api_url, seed_credentials):
+    # tenta logar no seed; se falhar, cria um usuário novo e loga nele
+    r = http.post(f"{api_url}/auth/login",
+                  json={"email": seed_credentials["email"], "password": seed_credentials["password"]},
+                  timeout=REQUEST_TIMEOUT)
+    if r.status_code == 200:
+        return r.json()["access_token"]
 
-@pytest.fixture()
-def auth_header(login_token):
-    return {"Authorization": f"Bearer {login_token}"}
+    # cria um usuário “descartável”
+    rnd = uuid.uuid4().hex[:8]
+    email = f"qa_{rnd}@example.com"
+    payload = {"username": f"qa_{rnd}", "email": email, "password": "Abcd1234!"}
+    rr = http.post(f"{api_url}/auth/register", json=payload, timeout=REQUEST_TIMEOUT)
+    assert rr.status_code == 200, f"Falha registrando usuário descartável: {rr.status_code} {rr.text}"
 
-@pytest.fixture()
-def create_wishlist(base_url, auth_header):
-    def _create(name):
-        r = requests.post(
-            f"{base_url}/wishlists",
-            headers=auth_header,
-            json={"name": name},
-            timeout=REQUEST_TIMEOUT,
-        )
-        return r
-    return _create
+    rl = http.post(f"{api_url}/auth/login",
+                   json={"email": email, "password": "Abcd1234!"},
+                   timeout=REQUEST_TIMEOUT)
+    assert rl.status_code == 200, f"Falha ao logar após registro: {rl.status_code} {rl.text}"
+    return rl.json()["access_token"]
 
-@pytest.fixture()
-def create_product(base_url, auth_header):
-    def _create(wishlist_id: int, product_name: str = "New Gadget", price: str = "99.99", zipcode: str = "12345678"):
-        r = requests.post(
-            f"{base_url}/wishlists/{wishlist_id}/products",
-            headers=auth_header,
-            json={"Product": product_name, "Price": price, "Zipcode": zipcode},
-            timeout=REQUEST_TIMEOUT,
-        )
-        return r
-    return _create
+@pytest.fixture
+def authz(bearer_token):
+    return _auth_headers(bearer_token)
