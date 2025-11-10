@@ -1,76 +1,137 @@
 # tests_api/conftest.py
 import os
 import time
-import random
-import string
+import uuid
 import pytest
 import requests
 
-# Base URL: usa variável de ambiente se existir, senão 127.0.0.1:8000
-BASE_URL = os.environ.get("API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 
-# Usuário seed (já existe ao subir a API)
-SEED_EMAIL = "projeto@example.com"
-SEED_PASSWORD = "Senha123!"
+API_BASE_URL = os.environ.get("API_BASE_URL", "http://127.0.0.1:8000")
 
-def _rand(n=6) -> str:
-    """String aleatória simples para evitar colisão de e-mail/nome."""
-    alf = string.ascii_lowercase + string.digits
-    return "".join(random.choices(alf, k=n))
+
+class HttpClient(requests.Session):
+    def __init__(self, base_url: str):
+        super().__init__()
+        self.base_url = base_url.rstrip("/")
+        self.last_response = None
+
+    def request(self, method, url, **kwargs):
+        full_url = url if url.startswith("http") else f"{self.base_url}{url}"
+        response = super().request(method, full_url, **kwargs)
+        self.last_response = response
+        return response
+
 
 @pytest.fixture(scope="session")
-def api():
-    """Sessão HTTP simples (requests) com base_url e timeout."""
-    s = requests.Session()
-    s.headers.update({"Accept": "application/json"})
-    # Smoke: garante que a API está de pé
-    r = s.get(f"{BASE_URL}/", timeout=10)
-    assert r.status_code == 200, f"API fora do ar em {BASE_URL}: {r.status_code}"
-    return s
+def http_client() -> HttpClient:
+    return HttpClient(API_BASE_URL)
 
-# ------- HELPERS CURTINHOS (usados nos testes) -------
 
-def novo_usuario():
-    """Gera um payload válido de usuário único."""
-    now = int(time.time())
+def _uniq() -> str:
+    return uuid.uuid4().hex[:8]
+
+
+def generate_unique_username(prefix: str = "usuario") -> str:
+    return f"{prefix}_{int(time.time()*1000)}_{_uniq()}"
+
+
+def generate_unique_email(domain: str = "exemplo.com") -> str:
+    return f"usuario_{int(time.time()*1000)}_{_uniq()}@{domain}"
+
+
+def create_new_user_payload() -> dict:
     return {
-        "username": f"user_{_rand()}",
-        "email": f"u{now}_{_rand()}@example.com",
-        "password": "Senha123!"
+        "email": generate_unique_email(),
+        "password": "Senha123!",
+        "username": generate_unique_username(),
     }
 
-def login_token(api_session, email=SEED_EMAIL, password=SEED_PASSWORD) -> str:
-    r = api_session.post(f"{BASE_URL}/auth/login",
-                         json={"email": email, "password": password},
-                         timeout=10)
-    assert r.status_code == 200, f"login falhou: {r.status_code} {r.text}"
-    data = r.json()
-    assert "access_token" in data, "login não retornou access_token"
-    return data["access_token"]
 
-def bearer(token: str) -> dict:
-    return {"Authorization": f"Bearer {token}"}
+def register_user(user_payload: dict) -> requests.Response:
+    return requests.post(f"{API_BASE_URL}/auth/register", json=user_payload, timeout=10)
 
-def criar_wishlist(api_session, token: str, name: str = None):
-    name = name or f"wl_{_rand()}"
-    r = api_session.post(f"{BASE_URL}/wishlists",
-                         json={"name": name},
-                         headers=bearer(token),
-                         timeout=10)
-    assert r.status_code == 200, f"criar wishlist falhou: {r.status_code} {r.text}"
-    return r.json()
 
-def add_prod(api_session, token: str, wishlist_id: int, **over):
+def login_and_get_token(email: str, password: str) -> str:
+    response = requests.post(
+        f"{API_BASE_URL}/auth/login",
+        json={"email": email, "password": password},
+        timeout=10,
+    )
+    response.raise_for_status()
+    body = response.json()
+    return body["access_token"]
+
+
+def build_auth_header(access_token: str) -> dict:
+    return {"Authorization": f"Bearer {access_token}"}
+
+
+def create_wishlist(access_token: str, name: str | None = None) -> requests.Response:
+    wishlist_name = name or f"wishlist_{int(time.time()*1000)}_{_uniq()}"
+    return requests.post(
+        f"{API_BASE_URL}/wishlists",
+        json={"name": wishlist_name},
+        headers=build_auth_header(access_token),
+        timeout=10,
+    )
+
+
+def add_product_to_wishlist(
+    access_token: str,
+    wishlist_id: int,
+    Product: str = "Produto Genérico",
+    Price: str = "10.00",
+    Zipcode: str = "01001-000",
+    delivery_estimate: str = "2 dias",
+    shipping_fee: str = "0.00",
+) -> requests.Response:
     payload = {
-        "Product": "Produto QA",
-        "Price": "199.90",
-        "Zipcode": "01001-000",
-        "delivery_estimate": "5 dias",
-        "shipping_fee": "9.90",
+        "Product": Product,
+        "Price": Price,
+        "Zipcode": Zipcode,
+        "delivery_estimate": delivery_estimate,
+        "shipping_fee": shipping_fee,
     }
-    payload.update(over)
-    r = api_session.post(f"{BASE_URL}/wishlists/{wishlist_id}/products",
-                         json=payload,
-                         headers=bearer(token),
-                         timeout=10)
-    return r  # deixo o teste decidir o assert (200, 422, etc.)
+    return requests.post(
+        f"{API_BASE_URL}/wishlists/{wishlist_id}/products",
+        json=payload,
+        headers=build_auth_header(access_token),
+        timeout=10,
+    )
+
+
+def list_wishlist_products(
+    access_token: str,
+    wishlist_id: int,
+    params: dict | None = None,
+) -> requests.Response:
+    return requests.get(
+        f"{API_BASE_URL}/wishlists/{wishlist_id}/products",
+        params=params or {},
+        headers=build_auth_header(access_token),
+        timeout=10,
+    )
+
+
+def update_product(
+    access_token: str,
+    product_id: int,
+    **fields,
+) -> requests.Response:
+    return requests.put(
+        f"{API_BASE_URL}/products/{product_id}",
+        json=fields,
+        headers=build_auth_header(access_token),
+        timeout=10,
+    )
+
+
+def delete_product(
+    access_token: str,
+    product_id: int,
+) -> requests.Response:
+    return requests.delete(
+        f"{API_BASE_URL}/products/{product_id}",
+        headers=build_auth_header(access_token),
+        timeout=10,
+    )
