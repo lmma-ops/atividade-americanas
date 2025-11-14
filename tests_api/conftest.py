@@ -4,6 +4,7 @@ import time
 import uuid
 import pytest
 import requests
+from __future__ import annotations
 
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://127.0.0.1:8000")
