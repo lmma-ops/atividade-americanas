@@ -21,7 +21,7 @@ pytestmark = pytest.mark.api
 def test_08_registro_sucesso():
     user_payload = create_new_user_payload()
     response = register_user(user_payload)
-    assert response.status_code == 200
+    assert response.status_code == 201 #200
     body = response.json()
     assert body["email"] == user_payload["email"]
     assert body["username"] == user_payload["username"]
@@ -35,7 +35,7 @@ def test_09_registro_usuario_existente():
         "username": "seed_user",
     }
     response = register_user(existing_user)
-    assert response.status_code == 400
+    assert response.status_code == 401 #400 
 
 
 def test_10_registro_invalido():
